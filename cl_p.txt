@@ -1,0 +1,76 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Sep 26 08:18:12 2025
+
+@author: 91948
+"""
+
+#!/usr/bin/env python3
+import socket
+import ssl
+import hashlib
+import json
+
+HOST = "127.0.0.1"
+PORT = 65431
+
+# TLS / SSL context for client
+context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+context.load_cert_chain(certfile="client.crt", keyfile="client.key")
+context.load_verify_locations("ca.crt")
+context.check_hostname = False
+
+print("[*] Client: Loaded client certificate and CA for verification")
+
+with socket.create_connection((HOST, PORT)) as sock:
+    with context.wrap_socket(sock, server_hostname=HOST) as ssock:
+        print(f"[Handshake] Client received server certificate")
+        print("[Handshake] Client verified server certificate (via CA)")
+        print("[Handshake] Mutual authentication successful → Secure channel established\n")
+        print(f"[*] Connected securely to {HOST}:{PORT}\n")
+
+        # ===== PASSWORD AUTHENTICATION =====
+        for attempt in range(3):
+            prompt = ssock.recv(1024).decode()
+            pwd = input(prompt)
+            pwd_hash = hashlib.sha256(pwd.encode()).hexdigest()
+            ssock.sendall(pwd_hash.encode())
+
+            response = ssock.recv(1024).decode()
+            print(response)
+            if "successful" in response:
+                break
+        else:
+            print("[*] Too many failed attempts. Exiting.")
+            ssock.close()
+            exit()
+
+        # ===== RECEIVE MATRIX AND LOOKUP =====
+        data = ssock.recv(1024)
+        matrix = json.loads(data.decode())
+        print("[*] Received matrix from server:")
+        for row in matrix:
+            print(row)
+
+        # Example: pick row=1, col=2
+        row, col = 1, 2
+        value = matrix[row][col]
+        print(f"[*] Sending value at [{row}][{col}] back to server: {value}")
+        ssock.sendall(str(value).encode())
+
+        # ===== CHAT LOOP (optional) =====
+        while True:
+            msg = input("[Client > ] ").strip()
+            ssock.sendall(msg.encode())
+            if msg.lower() in ("exit", "quit"):
+                print("[*] Client ending session.")
+                break
+
+            data = ssock.recv(1024)
+            if not data:
+                break
+            reply = data.decode().strip()
+            print(f"[Server]: {reply}")
+            if reply.lower() in ("exit", "quit", "goodbye!"):
+                print("[*] Server ended the session.")
+                break

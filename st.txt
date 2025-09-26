@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+import subprocess
+from pathlib import Path
+
+def run(cmd):
+    subprocess.run(cmd, check=True)
+
+def setup_ca():
+    """Create Root CA key + certificate (if not exists)."""
+    if not Path("ca.key").exists() or not Path("ca.crt").exists():
+        run(["openssl", "genrsa", "-out", "ca.key", "4096"])
+        run([
+            "openssl", "req", "-new", "-x509", "-days", "365",
+            "-key", "ca.key", "-out", "ca.crt",
+            "-subj", "/CN=MyRootCA"
+        ])
+        print("[+] Root CA created.\n")
+    else:
+        print("[*] CA already exists. Skipping.\n")
+
+def issue_cert(name):
+    """Issue a certificate signed by our CA for given name."""
+    run(["openssl", "genrsa", "-out", f"{name}.key", "2048"])
+    run([
+        "openssl", "req", "-new", "-key", f"{name}.key",
+        "-out", f"{name}.csr",
+        "-subj", f"/CN={name}.local"
+    ])
+    run([
+        "openssl", "x509", "-req", "-in", f"{name}.csr",
+        "-CA", "ca.crt", "-CAkey", "ca.key", "-CAcreateserial",
+        "-out", f"{name}.crt", "-days", "365"
+    ])
+    print(f"[+] {name}.crt issued by CA.\n")
+
+
+print("\n=== SSL/TLS Certificate Setup ===\n")
+setup_ca()
+issue_cert("server")
+issue_cert("client")
+print("[*] All certificates ready!\n")
