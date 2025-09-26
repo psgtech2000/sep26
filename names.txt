@@ -1,0 +1,9 @@
+st.txt -> setup file
+cl.txt -> client file normal
+sr.txt -> server file normal
+
+cl_p.txt  -> password question client
+sr_p.txt -> password question server
+
+sr_v.txt  -> voting question server
+cl_v.txt  -> voting question client
