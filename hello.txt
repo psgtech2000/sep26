@@ -1,0 +1,744 @@
+
+#**MIN HASH with hash and permuation**
+"""
+
+import numpy as np
+import random
+
+def get_ngrams(sequence, n):
+    words = sequence.split()  # Split into words
+    ngrams = []
+    for i in range(len(words) - n + 1):
+        ngram = ' '.join(words[i:i+n])
+        ngrams.append(ngram)
+    return ngrams
+
+def create_shingle_doc_matrix(sequences, n):
+    all_shingles = set()
+    for seq in sequences:
+        shingles = get_ngrams(seq, n)
+        all_shingles.update(shingles)
+    all_shingles = sorted(list(all_shingles))
+
+    n_shingles = len(all_shingles)
+    n_docs = len(sequences)
+    shingle_doc_matrix = np.zeros((n_shingles, n_docs), dtype=int)
+
+    for j, doc in enumerate(sequences):
+        doc_shingles = get_ngrams(doc, n)
+        for i, shingle in enumerate(all_shingles):
+            if shingle in doc_shingles:
+                shingle_doc_matrix[i, j] = 1
+
+    return shingle_doc_matrix, all_shingles
+
+def get_example_hash_functions(modulus):
+  h1 = lambda r: (1 * r + 1) % modulus
+  h2 = lambda r: (3 * r + 1) % modulus
+  return [h1, h2]
+
+def generate_hash_functions(num_hashes, modulus):
+    hash_functions = []
+    for _ in range(num_hashes):
+        a = random.randint(1, modulus - 1)
+        b = random.randint(0, modulus - 1)
+        hash_functions.append(lambda r, a=a, b=b: (a * r + b) % modulus)
+    return hash_functions
+
+def compute_signature_matrix(shingle_doc_matrix, num_hashes, modulus=None):
+    n_shingles, n_docs = shingle_doc_matrix.shape
+    if modulus is None:
+        modulus = n_shingles
+    hash_functions = get_example_hash_functions(modulus)
+    # hash_functions = generate_hash_functions(num_hashes, modulus)  # RANDOM
+
+    INF = np.inf
+    sig_matrix = np.full((num_hashes, n_docs), INF)
+
+    for r in range(n_shingles):
+        # Compute hash values for this row
+        hash_values = []
+        for h in hash_functions:
+            hash_values.append(h(r))
+
+        for c in range(n_docs):
+            if shingle_doc_matrix[r, c] == 1:
+                for i in range(num_hashes):
+                    if hash_values[i] < sig_matrix[i, c]:
+                        sig_matrix[i, c] = hash_values[i]
+
+    return sig_matrix
+
+def compute_signature_matrix_permutations(shingle_doc_matrix, num_hashes):
+    n_shingles, n_docs = shingle_doc_matrix.shape
+
+    # Initialize signature matrix with infinity
+    INF = np.inf
+    sig_matrix = np.full((num_hashes, n_docs), INF)
+
+    # Generate random permutations of row indices
+    rows = list(range(n_shingles))
+    permutations = []
+    for _ in range(num_hashes):
+        perm = random.sample(rows, len(rows))  # randomly shuffle all row indices
+        permutations.append(perm)
+
+    # Compute MinHash signature using permutations
+    for i, perm in enumerate(permutations):
+        for col in range(n_docs):
+            for row in perm:
+                if shingle_doc_matrix[row, col] == 1:
+                    sig_matrix[i, col] = row
+                    break  # Take the first row index where a 1 is found
+
+    return sig_matrix
+
+def minhash_similarity(sig_vec1, sig_vec2):
+    matches = np.sum(sig_vec1 == sig_vec2)
+    return matches / len(sig_vec1)
+
+def jaccard_similarity(shingles1, shingles2):
+    set1 = set(shingles1)
+    set2 = set(shingles2)
+    intersection_size = len(set1 & set2)
+    union_size = len(set1 | set2)
+    if union_size == 0:
+        return 0.0
+    else:
+        return intersection_size / union_size
+
+def print_pairwise_similarity_matrices(sequences, sig_matrix, n):
+    n_docs = sig_matrix.shape[1]
+    minhash_sim_matrix = np.zeros((n_docs, n_docs))
+    jaccard_sim_matrix = np.zeros((n_docs, n_docs))
+
+    # Compute shingles for each document (no list comprehension)
+    doc_shingles = []
+    for seq in sequences:
+        shingles = get_ngrams(seq, n)
+        doc_shingles.append(shingles)
+
+    # Compute similarity matrices
+    for i in range(n_docs):
+        for j in range(n_docs):
+            if i == j:
+                minhash_sim_matrix[i, j] = 1.0
+                jaccard_sim_matrix[i, j] = 1.0
+            else:
+                minhash_sim_matrix[i, j] = minhash_similarity(sig_matrix[:, i], sig_matrix[:, j])
+                jaccard_sim_matrix[i, j] = jaccard_similarity(doc_shingles[i], doc_shingles[j])
+
+    # Print MinHash similarity matrix
+    print("MinHash Pairwise Similarity Matrix:")
+    for i in range(n_docs):
+        for j in range(n_docs):
+            if i == j:
+                print("*", end="\t")
+            elif i < j:
+                print(f"{minhash_sim_matrix[i, j]:.2f}", end="\t")
+            else:
+                print("-", end="\t")
+        print()
+
+    # Print Jaccard similarity matrix
+    print("\nJaccard Pairwise Similarity Matrix:")
+    for i in range(n_docs):
+        for j in range(n_docs):
+            if i == j:
+                print("*", end="\t")
+            elif i < j:
+                print(f"{jaccard_sim_matrix[i, j]:.2f}", end="\t")
+            else:
+                print("-", end="\t")
+        print()
+    return minhash_sim_matrix, jaccard_sim_matrix
+
+def detect_duplicates(minhash_sim_matrix, jaccard_sim_matrix, threshold=0.9):
+    n_docs = minhash_sim_matrix.shape[1]
+
+    print(f"\n[DUPLICATES - MinHash] Detecting duplicates with similarity >= {threshold}:")
+    found_minhash = False
+    for i in range(n_docs):
+        for j in range(i + 1, n_docs):
+            similarity = minhash_sim_matrix[i, j]
+            if similarity >= threshold:
+                print(f"Docs {i+1} and {j+1}: MinHash Similarity = {similarity:.2f}")
+                found_minhash = True
+    if not found_minhash:
+        print("No duplicates found.")
+
+    print(f"\n[DUPLICATES - Jaccard] Detecting duplicates with similarity >= {threshold}:")
+    found_jaccard = False
+    for i in range(n_docs):
+        for j in range(i + 1, n_docs):
+            similarity = jaccard_sim_matrix[i, j]
+            if similarity >= threshold:
+                print(f"Docs {i+1} and {j+1}: Jaccard Similarity = {similarity:.2f}")
+                found_jaccard = True
+    if not found_jaccard:
+        print("No duplicates found.")
+
+
+# Example usage
+sequences = ["the cat sat", "the dog ran", "cat and dog", "the cat ran"]
+n = 2
+shingle_doc_matrix, shingle_vocab = create_shingle_doc_matrix(sequences, n)
+print("Shingles:", shingle_vocab)
+print("Shingle-Doc Matrix:\n", shingle_doc_matrix)
+
+# Using hash functions
+num_hashes = 2
+modulus = 5
+print("\n=== MinHash with Hash Functions ===")
+sig_matrix_hash = compute_signature_matrix(shingle_doc_matrix, num_hashes, modulus)
+print("Signature Matrix (Hash Functions):")
+print(sig_matrix_hash)
+minhash_sim_matrix_hash, jaccard_sim_matrix = print_pairwise_similarity_matrices(sequences, sig_matrix_hash, n)
+detect_duplicates(minhash_sim_matrix_hash, jaccard_sim_matrix, threshold=0.9)
+
+# Using permutations
+num_hashes = 5
+print("\n=== MinHash with Permutations ===")
+sig_matrix_perm = compute_signature_matrix_permutations(shingle_doc_matrix, num_hashes)
+print("Signature Matrix (Permutations):")
+print(sig_matrix_perm)
+minhash_sim_matrix_perm, jaccard_sim_matrix = print_pairwise_similarity_matrices(sequences, sig_matrix_perm, n)
+detect_duplicates(minhash_sim_matrix_perm, jaccard_sim_matrix, threshold=0.9)
+
+"""#**MINHASH WITH CLASS NOTES EXAMPLE**"""
+
+#Class notes example
+shingle_doc_matrix = np.array([
+    [1, 0, 0, 1],  # Row 0
+    [0, 0, 1, 0],  # Row 1
+    [0, 1, 0, 1],  # Row 2
+    [1, 0, 1, 1],  # Row 3
+    [0, 0, 1, 1]   # Row 4
+])
+
+# Using hash functions
+num_hashes = 2
+modulus = 5
+
+sig_matrix = compute_signature_matrix(shingle_doc_matrix, num_hashes, modulus)
+print("Signature Matrix:")
+print(sig_matrix)
+
+minhash_sim_matrix, jaccard_sim_matrix = print_pairwise_similarity_matrices(sequences, sig_matrix, n)
+
+# Using permutations
+num_hashes = 5
+print("\n=== MinHash with Permutations ===")
+sig_matrix_perm = compute_signature_matrix_permutations(shingle_doc_matrix, num_hashes)
+print("Signature Matrix (Permutations):")
+print(sig_matrix_perm)
+minhash_sim_matrix_perm, jaccard_sim_matrix = print_pairwise_similarity_matrices(sequences, sig_matrix_perm, n)
+detect_duplicates(minhash_sim_matrix_perm, jaccard_sim_matrix, threshold=0.9)
+
+"""# **SVD**
+
+
+import numpy as np
+from numpy.linalg import svd, norm
+
+# Step 1: Documents and Query
+docs = [
+    "the cat sat on the mat",
+    "the dog sat on the mat",
+    "the cat chased the dog"
+]
+query = "cat sat mat"
+
+# Step 2: Tokenization & Vocabulary
+vocab = []
+for doc in docs:
+    words = doc.lower().split()
+    for word in words:
+        if word not in vocab:
+            vocab.append(word)
+vocab.sort()  # <-- important
+
+vocab_index = {}
+for i in range(len(vocab)):
+    vocab_index[vocab[i]] = i
+
+# Step 3: Term-Document Matrix
+term_doc_matrix = np.zeros((len(vocab), len(docs)))
+
+for j in range(len(docs)):
+    words = docs[j].lower().split()
+    for word in words:
+        i = vocab_index[word]
+        term_doc_matrix[i, j] += 1
+
+print("Term-Document Matrix:\n", term_doc_matrix)
+
+# Step 4: Compute TF-IDF Matrix
+n_terms, n_docs = term_doc_matrix.shape
+
+# Term Frequency
+tf_matrix = np.zeros((n_terms, n_docs))
+for j in range(n_docs):
+    col_sum = np.sum(term_doc_matrix[:, j])
+    for i in range(n_terms):
+        tf_matrix[i, j] = term_doc_matrix[i, j] / (col_sum + 1e-10)
+
+# Inverse Document Frequency
+idf_vector = np.zeros((n_terms, 1))
+for i in range(n_terms):
+    df = 0
+    for j in range(n_docs):
+        if term_doc_matrix[i, j] > 0:
+            df += 1
+    idf_vector[i, 0] = np.log((n_docs + 1) / (df + 0.5))
+
+# TF-IDF
+tfidf_matrix = tf_matrix * idf_vector
+print("\nTF-IDF Matrix:\n", np.round(tfidf_matrix, 3))
+
+# Step 5: Singular Value Decomposition (SVD)
+U, S, Vt = svd(tfidf_matrix, full_matrices=False)
+
+# Reduced rank k for LSI
+k = 2
+U_k = U[:, :k]
+S_k = np.diag(S[:k])
+Vt_k = Vt[:k, :]
+
+# LSI document vectors
+doc_vectors_lsi = (S_k @ Vt_k).T
+print("\nReduced Document Vectors (LSI space):\n", np.round(doc_vectors_lsi, 3))
+
+# Step 6: Query Vector
+q_vec = np.zeros((len(vocab), 1))
+words = query.lower().split()
+for word in words:
+    if word in vocab_index:
+        i = vocab_index[word]
+        q_vec[i, 0] += 1
+
+# TF-IDF for query
+q_tf = q_vec / (np.sum(q_vec) + 1e-10)
+q_tfidf = q_tf * idf_vector
+
+# Project query into LSI space
+q_lsi = np.linalg.inv(S_k) @ U_k.T @ q_tfidf
+q_lsi = q_lsi.flatten()
+
+# Step 7: Cosine Similarity
+def cosine_similarity_vec(a, b):
+    norm_a = norm(a)
+    norm_b = norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return np.dot(a, b) / (norm_a * norm_b)
+
+print("\nQuery similarity with documents:")
+for i in range(len(docs)):
+    sim = cosine_similarity_vec(q_lsi, doc_vectors_lsi[i])
+    print(f"Doc {i}: '{docs[i]}' | Similarity: {sim:.3f}")
+
+"""#**LINK ANALYSIS**
+
+##**PAGE RANK**
+####**PPT ALGORITHM AND EXAMPLE**
+# **POWER ITERATION**
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import networkx as nx
+
+links = {
+    0: [1],     # Doc1 → Doc2
+    1: [0,2],  # Doc2 → Doc1, Doc3
+    2: [1]      # Doc3 → Doc2
+}
+
+n_nodes = 3
+H = np.zeros((n_nodes, n_nodes), dtype=float)
+
+for src, dests in links.items():
+    for dest in dests:
+        H[src][dest] = 1
+
+print("Adjacency Matrix")
+print(H)
+
+# Step 1: If a row of H has no 1's, then replace each element by 1/N
+
+H_step1 = H.copy()
+row_sums = H_step1.sum(axis=1)
+dangling = (row_sums == 0)  #boolean
+H_step1[dangling] = np.ones(n_nodes) / n_nodes
+
+# Step 2: Divide each 1 in H by the number of 1's in its row (based on original H)
+H_step2 = H_step1.copy()
+for i in range(n_nodes):
+    num_links = np.sum(H[i])
+    if num_links > 0:
+        for j in range(n_nodes):
+            if H[i, j] == 1:
+                H_step2[i, j] = 1 / num_links
+
+# Step 3: Multiply the resulting matrix by (1 - α)
+alpha = 0.5
+S = H_step2 * (1 - alpha)
+print("\nAfter Step 3 (S = H * (1 - α)):")
+print(S)
+
+# Step 4: Add α/N to every entry of the resulting matrix to obtain G
+G = S + (alpha / n_nodes)
+print("\nAfter Step 4 (Final TPM G):")
+print(G)
+
+# Initial PageRank vector
+PR = np.array([1/3, 1/3, 1/3], dtype=float)
+
+max_iterations = 100
+epsilon = 0.01  # Convergence threshold
+
+for iteration in range(max_iterations):
+    PR_new = np.dot(PR, G)  # PR^(k+1) = PR^(k) * G
+    # Normalize to ensure sum is 1
+    print(f"\nIteration {iteration}: {PR_new} , Sum = {np.sum(PR_new)}")
+
+    if np.sum(np.abs(PR_new - PR)) < epsilon:
+        print(f"Converged at iteration {iteration}")
+        break
+    PR = PR_new
+
+PR_new /= np.sum(PR_new)
+
+print(f"\nFinal PageRank (normalized): {PR_new}")
+print(f"\n Final Sum of Page Rank = {np.sum(PR_new)}")
+
+my_labels = {}
+for i in range(n_nodes):
+  my_labels[i] = f"Doc{i+1}"
+
+# --- VISUALIZE PAGE RANK ---
+def visualize_page_rank(page_rank):
+    n_nodes = len(page_rank)
+    nodes = []
+    for i in range(n_nodes):
+        nodes.append("Doc " + str(i+1))
+    plt.bar(nodes, page_rank, color='skyblue')  # simple color
+    plt.ylabel('PageRank Value')
+    plt.title('PageRank Distribution')
+    plt.show()
+
+visualize_page_rank(PR_new)
+
+# --- VISUALIZE GRAPH ---
+G_nx = nx.from_numpy_array(H, create_using=nx.DiGraph)
+plt.figure(figsize=(6, 4))
+pos = nx.spring_layout(G_nx)
+nx.draw(G_nx, pos, with_labels=True, labels=my_labels,
+        node_color='skyblue', node_size=1500, arrowsize=20)
+plt.title("Document Graph (from adjacency matrix)")
+plt.show()
+
+"""# **EIGEN VECTOR - PAGE RANK**"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import networkx as nx
+
+links = {
+    0: [1],     # Doc1 → Doc2
+    1: [0,2],   # Doc2 → Doc1, Doc3
+    2: [1]      # Doc3 → Doc2
+}
+
+n_nodes = 3
+H = np.zeros((n_nodes, n_nodes), dtype=float)
+
+for src, dests in links.items():
+    for dest in dests:
+        H[src][dest] = 1
+
+print("Adjacency Matrix")
+print(H)
+
+# Step 1: Handle dangling nodes
+H_step1 = H.copy()
+row_sums = H_step1.sum(axis=1)
+dangling = (row_sums == 0)
+H_step1[dangling] = np.ones(n_nodes) / n_nodes
+
+# Step 2: Normalize rows
+H_step2 = H_step1.copy()
+for i in range(n_nodes):
+    num_links = np.sum(H[i])
+    if num_links > 0:
+        for j in range(n_nodes):
+            if H[i, j] == 1:
+                H_step2[i, j] = 1 / num_links
+
+# Step 3: Apply damping
+alpha = 0.5
+S = H_step2 * (1 - alpha)
+print("\nAfter Step 3 (S = H * (1 - α)):")
+print(S)
+
+# Step 4: Add teleportation
+G = S + (alpha / n_nodes)
+print("\nAfter Step 4 (Final TPM G):")
+print(G)
+
+# --- Eigenvector method ---
+eigvals, eigvecs = np.linalg.eig(G.T)
+idx = np.argmin(np.abs(eigvals - 1))  # eigenvalue closest to 1
+PR = np.real(eigvecs[:, idx])
+PR = PR / np.sum(PR)  # normalize
+
+print("\nPageRank (Eigenvector method):")
+print(PR)
+print("Sum =", np.sum(PR))
+
+my_labels = {i: f"Doc{i+1}" for i in range(n_nodes)}
+
+# --- VISUALIZE PAGE RANK ---
+def visualize_page_rank(page_rank):
+    nodes = [f"Doc {i+1}" for i in range(len(page_rank))]
+    plt.bar(nodes, page_rank, color='skyblue')
+    plt.ylabel('PageRank Value')
+    plt.title('PageRank Distribution')
+    for i, v in enumerate(page_rank):
+        plt.text(i, v + 0.01, f'{v:.4f}', ha='center')
+    plt.show()
+
+visualize_page_rank(PR)
+
+# --- VISUALIZE GRAPH ---
+G_nx = nx.from_numpy_array(H, create_using=nx.DiGraph)
+plt.figure(figsize=(6, 4))
+pos = nx.spring_layout(G_nx)
+nx.draw(G_nx, pos, with_labels=True, labels=my_labels,
+        node_color='skyblue', node_size=1500, arrowsize=20)
+plt.title("Document Graph (from adjacency matrix)")
+plt.show()
+
+"""# **TIME PERMITS SEE THIS**
+
+#**PS5**
+
+**DUPLICATE DETECTION**
+1) **FINDING N GRAMS**
+2) **JACCARD (ON N GRAMS), COSINE AND EUCLIDEAN (ON VECTORS)**
+3) **DETECTING DUPLICATES**
+
+####**On what vectors cosine and euclidean has to be done - dont know**
+###**In the below code done with**
+*   **binary**
+*   **count**
+*   **tf-idf**
+      
+      1)**freq normalization**
+      
+      2)**len  normalization** (unique shingles)
+"""
+
+import numpy as np
+
+# Step 1: Generate N-grams
+def get_ngrams(sequence, n):
+    ngrams = []
+    for i in range(len(sequence) - n + 1):
+        ngrams.append(sequence[i:i+n])
+    return ngrams
+
+# Step 2: Create Shingle-Doc Matrix with rows as shingles and columns as documents
+def create_shingle_doc_matrix(sequences, n, vector_type='binary'):
+    all_shingles = set()
+    for seq in sequences:
+        shingles = get_ngrams(seq, n)
+        all_shingles.update(shingles)
+    all_shingles = sorted(list(all_shingles))
+
+    # Create shingle-doc matrix: rows = shingles, columns = documents
+    n_shingles = len(all_shingles)
+    n_docs = len(sequences)
+    if vector_type == 'binary':
+        matrix = np.zeros((n_shingles, n_docs), dtype=int)
+        for j, doc in enumerate(sequences):
+            doc_shingles = get_ngrams(doc, n)
+            for i, shingle in enumerate(all_shingles):
+                if shingle in doc_shingles:
+                    matrix[i, j] = 1
+    elif vector_type == 'count':
+        matrix = np.zeros((n_shingles, n_docs), dtype=int)
+        for j, doc in enumerate(sequences):
+            doc_shingles = get_ngrams(doc, n)
+            for i, shingle in enumerate(all_shingles):
+                matrix[i, j] = doc_shingles.count(shingle)
+    return matrix, all_shingles
+
+# Step 3: Compute Custom TF-IDF Matrix
+def compute_tfidf_matrix(count_matrix, normalization='freq'):
+    n_terms, n_docs = count_matrix.shape
+    tfidf_matrix = np.zeros((n_terms, n_docs))
+
+    # Compute TF
+    if normalization == 'freq':  # Frequency Normalization
+        doc_sums = np.sum(count_matrix, axis=0, keepdims=True)
+        tf = count_matrix / doc_sums
+    else:  # 'term_count' Normalization (by number of unique shingles)
+        doc_terms = np.sum(count_matrix > 0, axis=0, keepdims=True)  # Number of unique shingles
+        tf = count_matrix / doc_terms
+
+    # Compute IDF
+    df = np.sum(count_matrix > 0, axis=1, keepdims=True)  # Number of docs with term
+    idf = np.log((n_docs +1) / (df + 0.5))
+
+    # Compute TF-IDF
+    tfidf_matrix = tf * idf
+
+    return tfidf_matrix
+
+# Step 4: Compute Jaccard Similarity Matrix
+def compute_jaccard_matrix(sequences, n):
+    ngram_sets = []
+    for seq in sequences:
+        ngrams = get_ngrams(seq, n)
+        ngram_sets.append(set(ngrams))
+    m = len(sequences)
+    matrix = np.zeros((m, m))
+    for i in range(m):
+        for j in range(m):
+            if i == j:
+                matrix[i, j] = 1.0
+                continue
+            inter = ngram_sets[i].intersection(ngram_sets[j])
+            union = ngram_sets[i].union(ngram_sets[j])
+            matrix[i, j] = len(inter) / len(union) if len(union) > 0 else 0.0
+    return matrix
+
+# Step 5: Compute Cosine Similarity Matrix
+def compute_cosine_matrix(shingle_doc_matrix):
+    m = shingle_doc_matrix.shape[1]
+    matrix = shingle_doc_matrix
+    cosine_matrix = np.zeros((m, m))
+    for i in range(m):
+        for j in range(m):
+            if i == j:
+                cosine_matrix[i, j] = 1.0
+                continue
+            vec1 = matrix[:, i]
+            vec2 = matrix[:, j]
+            dot_product = np.sum(vec1 * vec2)
+            norm1 = np.sqrt(np.sum(vec1 ** 2))
+            norm2 = np.sqrt(np.sum(vec2 ** 2))
+            cosine_matrix[i, j] = dot_product / (norm1 * norm2) if norm1 * norm2 != 0 else 0.0
+    return cosine_matrix
+
+# Step 6: Compute Euclidean Distance Matrix
+def compute_euclidean_matrix(shingle_doc_matrix):
+    m = shingle_doc_matrix.shape[1]  # Number of documents (columns)
+    # matrix = np.atleast_2d(shingle_doc_matrix)
+    matrix=shingle_doc_matrix
+    euclidean_matrix = np.zeros((m, m))
+    for i in range(m):
+        for j in range(m):
+            if i == j:
+                euclidean_matrix[i, j] = 0.0
+                continue
+            vec1 = matrix[:, i]
+            vec2 = matrix[:, j]
+            euclidean_matrix[i, j] = np.sqrt(np.sum((vec1 - vec2) ** 2))
+    return euclidean_matrix
+
+# Step 7: Find duplicates
+def find_duplicates(matrix, sequences, metric, tol=1e-8):
+    duplicates = []
+    m = matrix.shape[0]
+    for i in range(m):
+        for j in range(i + 1, m):
+            if metric == 'euclidean':
+                if abs(matrix[i, j]) <= tol:
+                    duplicates.append((i, j, sequences[i], sequences[j]))
+            else:  # For similarity metrics
+                if matrix[i, j] >= 1.0 - tol:
+                    duplicates.append((i, j, sequences[i], sequences[j]))
+    return duplicates
+
+if __name__ == "__main__":
+    sequences = [
+        "ACGTACGT",
+        "ACGTACGT",  # Exact duplicate of the first
+        "ACGTACGA",  # Similar but not duplicate
+        "TGCATGCA"   # Different
+    ]
+
+    sequences = [seq.upper() for seq in sequences]
+
+    # N-gram size
+    n = 3
+
+    # Create shingle-doc matrices for different vector types
+    shingle_doc_binary, shingle_vocab = create_shingle_doc_matrix(sequences, n, vector_type='binary')
+    shingle_doc_count, _ = create_shingle_doc_matrix(sequences, n, vector_type='count')
+
+    # Compute TF-IDF with different normalizations
+    tfidf_freq = compute_tfidf_matrix(shingle_doc_count, normalization='freq')
+    tfidf_term_count = compute_tfidf_matrix(shingle_doc_count, normalization='term_count')
+
+    print("Shingles:", shingle_vocab)
+    print("Shingle-Doc Matrix (Binary):\n", shingle_doc_binary)
+    print("Shingle-Doc Matrix (Count):\n", shingle_doc_count)
+    print("TF-IDF Matrix (Frequency Normalization):\n", tfidf_freq.round(4))
+    print("TF-IDF Matrix (Term Count Normalization):\n", tfidf_term_count.round(4))
+
+    # Compute similarity/distance matrices for each vector type and TF-IDF normalization
+    jaccard_matrix = compute_jaccard_matrix(sequences, n)
+    # cosine_count = compute_cosine_matrix(shingle_doc_count)
+    cosine_tfidf_freq = compute_cosine_matrix(tfidf_freq)
+    cosine_tfidf_term_count = compute_cosine_matrix(tfidf_term_count)
+
+    # euclidean_count = compute_euclidean_matrix(shingle_doc_count)
+    euclidean_tfidf_freq = compute_euclidean_matrix(tfidf_freq)
+    euclidean_tfidf_term_count = compute_euclidean_matrix(tfidf_term_count)
+
+    # Print matrices
+    print("\nJaccard Similarity Matrix:")
+    print(jaccard_matrix.round(4))
+
+    print("\nCosine Similarity Matrix (TF-IDF with Frequency Normalization):")
+    print(cosine_tfidf_freq.round(4))
+    print("\nCosine Similarity Matrix (TF-IDF with Term Count Normalization):")
+    print(cosine_tfidf_term_count.round(4))
+
+    print("\nEuclidean Distance Matrix (TF-IDF with Frequency Normalization):")
+    print(euclidean_tfidf_freq.round(4))
+    print("\nEuclidean Distance Matrix (TF-IDF with Term Count Normalization):")
+    print(euclidean_tfidf_term_count.round(4))
+
+    # Find duplicates
+    jaccard_duplicates = find_duplicates(jaccard_matrix, sequences, 'jaccard')
+
+    # cosine_duplicates_count = find_duplicates(cosine_count, sequences, 'cosine')
+    cosine_duplicates_tfidf_freq = find_duplicates(cosine_tfidf_freq, sequences, 'cosine')
+    cosine_duplicates_tfidf_term_count = find_duplicates(cosine_tfidf_term_count, sequences, 'cosine')
+    # euclidean_duplicates_count = find_duplicates(euclidean_count, sequences, 'euclidean')
+    euclidean_duplicates_tfidf_freq = find_duplicates(euclidean_tfidf_freq, sequences, 'euclidean')
+    euclidean_duplicates_tfidf_term_count = find_duplicates(euclidean_tfidf_term_count, sequences, 'euclidean')
+
+    print("\nDuplicates based on Jaccard Similarity:")
+    print(jaccard_duplicates)
+
+    # print("\nDuplicates based on Cosine Similarity (Count):")
+    # print(cosine_duplicates_count)
+
+    print("\nDuplicates based on Cosine Similarity (TF-IDF with Frequency Normalization):")
+    print(cosine_duplicates_tfidf_freq)
+    print("\nDuplicates based on Cosine Similarity (TF-IDF with Term Count Normalization):")
+    print(cosine_duplicates_tfidf_term_count)
+
+    # print("\nDuplicates based on Euclidean Distance (Count):")
+    # print(euclidean_duplicates_count)
+
+    print("\nDuplicates based on Euclidean Distance (TF-IDF with Frequency Normalization):")
+    print(euclidean_duplicates_tfidf_freq)
+    print("\nDuplicates based on Euclidean Distance (TF-IDF with Term Count Normalization):")
+    print(euclidean_duplicates_tfidf_term_count)
