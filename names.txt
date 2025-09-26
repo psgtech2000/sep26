@@ -7,3 +7,5 @@ sr_p.txt -> password question server
 
 sr_v.txt  -> voting question server
 cl_v.txt  -> voting question client
+
+normal.txt -> full manual code
